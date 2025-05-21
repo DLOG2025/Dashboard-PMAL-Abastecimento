@@ -1,17 +1,49 @@
-# ==========================================
-# DASHBOARD PMAL - CONTROLE DE COMBUSTÍVEL (100% ONLINE - UPLOAD DE ARQUIVOS)
-# ==========================================
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import requests
+import io
 import numpy as np
+import re
 
 st.set_page_config(
     page_title="Dashboard PMAL - Combustível",
     page_icon="🚒",
     layout="wide"
 )
+
+# ====================
+# CONFIGURAÇÃO DOS LINKS
+# ====================
+GITHUB_USER = "DLOG2025"
+GITHUB_REPO = "Dashboard-PMAL-Abastecimento"
+GITHUB_PATH = ""  # Se os arquivos estão na raiz
+
+# Função que pega todos os arquivos " ABR.xlsx" do repositório
+def get_abastecimento_files():
+    url = f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/contents/{GITHUB_PATH}?per_page=1000"
+    resp = requests.get(url)
+    arquivos = resp.json()
+    lista_links = []
+    for arq in arquivos:
+        if isinstance(arq, dict) and arq['name'].endswith(' ABR.xlsx'):
+            lista_links.append(arq['download_url'])
+    if not lista_links:
+        st.error("Nenhum arquivo de abastecimento (terminado com ' ABR.xlsx') foi encontrado no repositório!")
+        st.stop()
+    return lista_links
+
+def get_download_url(filename):
+    return f"https://github.com/{GITHUB_USER}/{GITHUB_REPO}/raw/main/{filename}"
+
+LINK_LOCADOS = get_download_url('LOCADOS.xlsx')
+LINK_PROPRIOS = get_download_url('PROPRIOS_JUSTIÇA.xlsx')
+LINK_CIDADES_OPM = get_download_url('CIDADES_POR_OPM.xlsx')
+
+def baixar_excel(url):
+    resp = requests.get(url)
+    resp.raise_for_status()
+    return pd.read_excel(io.BytesIO(resp.content))
 
 def padroniza_placa(placa):
     return str(placa).upper().replace('-', '').replace(' ', '')
@@ -33,54 +65,42 @@ def valor_total(row):
         float(str(row.get('Diesel S10 (R$)', '0')).replace('R$', '').replace(' ', '').replace(',', '.').replace('-', '0') or 0)
     )
 
-def carregar_dados(uploaded_abast_files, frota_proprios_file, frota_locados_file):
+def carregar_dados():
     # Carregar arquivos de abastecimento
+    abast_links = get_abastecimento_files()
     dados = []
-    for arquivo in uploaded_abast_files:
-        df = pd.read_excel(arquivo, skiprows=4)
+    for url in abast_links:
+        df = baixar_excel(url)
         df.rename(columns={df.columns[0]: 'PLACA'}, inplace=True)
         df = df[df['PLACA'].astype(str).str.upper().str.strip() != 'TOTAL']
-        df['UNIDADE'] = arquivo.name.split(' ABR')[0].replace('º', '').strip()
-        df['ARQUIVO'] = arquivo.name
+        nome_arquivo = url.split('/')[-1]
+        df['UNIDADE'] = nome_arquivo.split(' ABR')[0].replace('º', '').strip()
+        df['ARQUIVO'] = nome_arquivo
         df['PLACA'] = df['PLACA'].apply(padroniza_placa)
-
         for col in ['Gasolina (Lts)', 'Álcool (Lts)', 'Diesel (Lts)', 'Diesel S10 (Lts)']:
             if col not in df.columns:
                 df[col] = 0
-
         for col in ['Gasolina (R$)', 'Álcool (R$)', 'Diesel (R$)', 'Diesel S10 (R$)']:
             if col not in df.columns:
                 df[col] = 0
-
         df['TOTAL_LITROS'] = df[['Gasolina (Lts)', 'Álcool (Lts)', 'Diesel (Lts)', 'Diesel S10 (Lts)']].sum(axis=1)
         df['VALOR_TOTAL'] = df.apply(valor_total, axis=1)
         df['COMBUSTÍVEL'] = df.apply(tipo_combustivel, axis=1)
         dados.append(df)
-
     df_abastecimento = pd.concat(dados, ignore_index=True)
 
     # Carregar e tratar arquivos de frota
-    df_proprios, df_locados = None, None
-    if frota_proprios_file:
-        df_proprios = pd.read_excel(frota_proprios_file)
-        df_proprios.rename(columns={df_proprios.columns[0]: 'PLACA'}, inplace=True)
-        df_proprios['PLACA'] = df_proprios['PLACA'].apply(padroniza_placa)
-        df_proprios['FROTA'] = 'PRÓPRIO'
-    if frota_locados_file:
-        df_locados = pd.read_excel(frota_locados_file)
-        df_locados.rename(columns={df_locados.columns[0]: 'PLACA'}, inplace=True)
-        df_locados['PLACA'] = df_locados['PLACA'].apply(padroniza_placa)
-        df_locados['FROTA'] = 'LOCADO'
+    df_proprios = baixar_excel(LINK_PROPRIOS)
+    df_proprios.rename(columns={df_proprios.columns[0]: 'PLACA'}, inplace=True)
+    df_proprios['PLACA'] = df_proprios['PLACA'].apply(padroniza_placa)
+    df_proprios['FROTA'] = 'PRÓPRIO'
 
-    if df_proprios is not None and df_locados is not None:
-        df_frota = pd.concat([df_proprios, df_locados], ignore_index=True)
-    elif df_proprios is not None:
-        df_frota = df_proprios.copy()
-    elif df_locados is not None:
-        df_frota = df_locados.copy()
-    else:
-        df_frota = pd.DataFrame(columns=['PLACA', 'FROTA'])
+    df_locados = baixar_excel(LINK_LOCADOS)
+    df_locados.rename(columns={df_locados.columns[0]: 'PLACA'}, inplace=True)
+    df_locados['PLACA'] = df_locados['PLACA'].apply(padroniza_placa)
+    df_locados['FROTA'] = 'LOCADO'
 
+    df_frota = pd.concat([df_proprios, df_locados], ignore_index=True)
     frota_dict = dict(zip(df_frota['PLACA'], df_frota['FROTA']))
     df_abastecimento['FROTA'] = df_abastecimento['PLACA'].map(frota_dict)
     df_abastecimento['FROTA'] = df_abastecimento['FROTA'].fillna('NÃO ENCONTRADO')
@@ -100,88 +120,53 @@ def formatar_reais(valor):
 
 def main():
     st.title("🚒 Dashboard Final de Abastecimento - PMAL")
-    st.caption("Faça upload dos arquivos Excel para análise online!")
+    st.caption("Dados carregados automaticamente do GitHub - 100% online!")
 
-    st.sidebar.header("🔽 Upload dos Arquivos")
-    abast_files = st.sidebar.file_uploader(
-        "1️⃣ Selecione arquivos de abastecimento (.xlsx) — pode selecionar vários",
-        type="xlsx", 
-        accept_multiple_files=True
-    )
-
-    frota_proprios = st.sidebar.file_uploader(
-        "2️⃣ Selecione o arquivo de frota PRÓPRIOS_JUSTIÇA (.xlsx) [opcional]",
-        type="xlsx", 
-        accept_multiple_files=False
-    )
-
-    frota_locados = st.sidebar.file_uploader(
-        "3️⃣ Selecione o arquivo de frota LOCADOS (.xlsx) [opcional]",
-        type="xlsx", 
-        accept_multiple_files=False
-    )
-
-    # NOVO: Upload de cidades por OPM (interior)
-    cidades_opm_file = st.sidebar.file_uploader(
-        "4️⃣ Selecione o arquivo de cidades por OPM (.xlsx) [opcional]",
-        type="xlsx",
-        accept_multiple_files=False
-    )
-
-    if not abast_files:
-        st.warning("Faça upload de pelo menos um arquivo de abastecimento para visualizar os dados.")
-        st.stop()
-
-    df, df_multiplas_om = carregar_dados(abast_files, frota_proprios, frota_locados)
-
-    # === NOVO PAINEL: Equidade de viaturas por cidades ===
-    if cidades_opm_file is not None:
-        df_cidades_opm = pd.read_excel(cidades_opm_file)
+    with st.spinner("Carregando dados diretamente do GitHub..."):
+        df, df_multiplas_om = carregar_dados()
+        df_cidades_opm = baixar_excel(LINK_CIDADES_OPM)
         df_cidades_opm.columns = [col.strip().upper() for col in df_cidades_opm.columns]
 
-        if "OPM" in df_cidades_opm.columns and "CIDADES" in df_cidades_opm.columns:
-            # Padroniza nome das unidades
-            def limpar_nome_opm(nome):
-                if pd.isna(nome): return ""
-                return str(nome).replace("º", "").replace("°", "").replace("/", "").strip().upper()
-            df_cidades_opm["OPM_LIMPA"] = df_cidades_opm["OPM"].apply(limpar_nome_opm)
-            df["UNIDADE_LIMPA"] = df["UNIDADE"].apply(limpar_nome_opm)
+    # === NOVO PAINEL: Equidade de viaturas por cidades ===
+    if "OPM" in df_cidades_opm.columns and "CIDADES" in df_cidades_opm.columns:
+        def limpar_nome_opm(nome):
+            if pd.isna(nome): return ""
+            return str(nome).replace("º", "").replace("°", "").replace("/", "").strip().upper()
+        df_cidades_opm["OPM_LIMPA"] = df_cidades_opm["OPM"].apply(limpar_nome_opm)
+        df["UNIDADE_LIMPA"] = df["UNIDADE"].apply(limpar_nome_opm)
 
-            # Apenas unidades do interior
-            opms_interior = df_cidades_opm["OPM_LIMPA"].unique()
-            df_interior = df[df["UNIDADE_LIMPA"].isin(opms_interior)]
+        opms_interior = df_cidades_opm["OPM_LIMPA"].unique()
+        df_interior = df[df["UNIDADE_LIMPA"].isin(opms_interior)]
+        viaturas_por_opm = df_interior.groupby("UNIDADE_LIMPA")["PLACA"].nunique().reset_index(name="VIATURAS")
+        resumo_opm = df_cidades_opm.merge(
+            viaturas_por_opm,
+            left_on="OPM_LIMPA",
+            right_on="UNIDADE_LIMPA",
+            how="left"
+        )
+        resumo_opm["VIATURAS"] = resumo_opm["VIATURAS"].fillna(0).astype(int)
+        resumo_opm["VIAT_POR_CIDADE"] = (resumo_opm["VIATURAS"] / resumo_opm["CIDADES"]).round(2)
+        resumo_opm = resumo_opm.sort_values("VIAT_POR_CIDADE")
 
-            # Conta viaturas únicas por OPM do interior
-            viaturas_por_opm = df_interior.groupby("UNIDADE_LIMPA")["PLACA"].nunique().reset_index(name="VIATURAS")
-            resumo_opm = df_cidades_opm.merge(
-                viaturas_por_opm,
-                left_on="OPM_LIMPA",
-                right_on="UNIDADE_LIMPA",
-                how="left"
-            )
-            resumo_opm["VIATURAS"] = resumo_opm["VIATURAS"].fillna(0).astype(int)
-            resumo_opm["VIAT_POR_CIDADE"] = (resumo_opm["VIATURAS"] / resumo_opm["CIDADES"]).round(2)
-            resumo_opm = resumo_opm.sort_values("VIAT_POR_CIDADE")
-
-            st.subheader("🚗 Distribuição de Viaturas por OPM (Interior)")
-            colX, colY = st.columns([2, 1])
-            colX.plotly_chart(
-                px.bar(
-                    resumo_opm,
-                    x="OPM", y="VIAT_POR_CIDADE",
-                    title="Ranking de Viaturas por Cidade Atendida (Interior)",
-                    labels={"VIAT_POR_CIDADE": "Viaturas/Cidade", "OPM": "OPM do Interior"},
-                    text="VIAT_POR_CIDADE"
-                ).update_traces(texttemplate='%{text:.2f}', textposition='outside'),
-                use_container_width=True
-            )
-            colY.dataframe(
-                resumo_opm[["OPM", "CIDADES", "VIATURAS", "VIAT_POR_CIDADE"]],
-                use_container_width=True
-            )
-            st.info("🔎 **Menor valor de Viaturas por Cidade indica OPM potencialmente mais desfavorecida**.")
-        else:
-            st.error("Arquivo de cidades deve ter as colunas: 'OPM' e 'CIDADES'.")
+        st.subheader("🚗 Distribuição de Viaturas por OPM (Interior)")
+        colX, colY = st.columns([2, 1])
+        colX.plotly_chart(
+            px.bar(
+                resumo_opm,
+                x="OPM", y="VIAT_POR_CIDADE",
+                title="Ranking de Viaturas por Cidade Atendida (Interior)",
+                labels={"VIAT_POR_CIDADE": "Viaturas/Cidade", "OPM": "OPM do Interior"},
+                text="VIAT_POR_CIDADE"
+            ).update_traces(texttemplate='%{text:.2f}', textposition='outside'),
+            use_container_width=True
+        )
+        colY.dataframe(
+            resumo_opm[["OPM", "CIDADES", "VIATURAS", "VIAT_POR_CIDADE"]],
+            use_container_width=True
+        )
+        st.info("🔎 **Menor valor de Viaturas por Cidade indica OPM potencialmente mais desfavorecida**.")
+    else:
+        st.error("Arquivo de cidades deve ter as colunas: 'OPM' e 'CIDADES'.")
 
     st.sidebar.header("🔍 Filtros Avançados")
     unidades = st.sidebar.multiselect("Unidade:", df['UNIDADE'].unique(), default=list(df['UNIDADE'].unique()))
@@ -194,7 +179,6 @@ def main():
         df['FROTA'].isin(frotas)
     ]
 
-    # MÉTRICAS DE TOPO
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Total de Registros", len(df_filtrado))
     col2.metric("Viaturas Únicas", df_filtrado['PLACA'].nunique())
@@ -203,7 +187,6 @@ def main():
     perc_nao_encontrado = (df_filtrado['FROTA'].value_counts(normalize=True).get('NÃO ENCONTRADO', 0)) * 100
     col5.metric("% Não Encontrados", f"{perc_nao_encontrado:.1f}%")
 
-    # GRÁFICOS
     st.subheader("📊 Consumo e Gasto por Unidade")
     colA, colB = st.columns(2)
     consumo_por_unidade = df_filtrado.groupby('UNIDADE')['TOTAL_LITROS'].sum().sort_values(ascending=True)
@@ -216,7 +199,6 @@ def main():
         ), 
         use_container_width=True
     )
-
     valor_por_unidade = df_filtrado.groupby('UNIDADE')['VALOR_TOTAL'].sum().sort_values(ascending=True)
     colB.plotly_chart(
         px.bar(
@@ -227,7 +209,6 @@ def main():
         ), 
         use_container_width=True
     )
-
     st.subheader("🏆 Top 20 Viaturas por Consumo e por Valor Gasto")
     top_litros = df_filtrado.groupby('PLACA')['TOTAL_LITROS'].sum().sort_values(ascending=False).head(20)
     st.plotly_chart(
@@ -238,7 +219,6 @@ def main():
         ), 
         use_container_width=True
     )
-
     top_valor = df_filtrado.groupby('PLACA')['VALOR_TOTAL'].sum().sort_values(ascending=False).head(20)
     st.plotly_chart(
         px.bar(
@@ -248,7 +228,6 @@ def main():
         ), 
         use_container_width=True
     )
-
     st.subheader("⛽ Distribuição de Combustível")
     combustiveis_graf = df_filtrado['COMBUSTÍVEL'].value_counts()
     st.plotly_chart(
@@ -259,12 +238,10 @@ def main():
         ), 
         use_container_width=True
     )
-
     st.subheader("📋 Detalhamento dos Abastecimentos")
     df_show = df_filtrado[['PLACA', 'UNIDADE', 'COMBUSTÍVEL', 'TOTAL_LITROS', 'VALOR_TOTAL', 'FROTA']].copy()
     df_show['VALOR_TOTAL'] = df_show['VALOR_TOTAL'].apply(formatar_reais)
     st.dataframe(df_show, use_container_width=True)
-
     if not df_multiplas_om.empty:
         st.warning("🚨 Viaturas abastecidas em mais de uma OM/planilha:")
         df_multiplas_om_show = df_multiplas_om[['PLACA', 'UNIDADE', 'COMBUSTÍVEL', 'TOTAL_LITROS', 'VALOR_TOTAL', 'FROTA']].copy()
