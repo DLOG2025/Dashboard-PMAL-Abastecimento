@@ -30,7 +30,6 @@ def valor_total(row):
     )
 
 def carregar_dados():
-    # Lista todos os arquivos da pasta atual
     arquivos = [f for f in os.listdir() if f.upper().endswith("ABR.XLSX") and not f.startswith("~$")]
     dados = []
     for arquivo in arquivos:
@@ -51,24 +50,6 @@ def carregar_dados():
         df['COMBUSTÍVEL'] = df.apply(tipo_combustivel, axis=1)
         dados.append(df)
     df_abastecimento = pd.concat(dados, ignore_index=True)
-
-    # Frota PRÓPRIOS
-    df_proprios = pd.read_excel("PROPRIOS_JUSTIÇA.xlsx")
-    df_proprios.rename(columns={df_proprios.columns[0]: 'PLACA'}, inplace=True)
-    df_proprios['PLACA'] = df_proprios['PLACA'].apply(padroniza_placa)
-    df_proprios['FROTA'] = 'PRÓPRIO'
-
-    # Frota LOCADOS
-    df_locados = pd.read_excel("LOCADOS.xlsx")
-    df_locados.rename(columns={df_locados.columns[0]: 'PLACA'}, inplace=True)
-    df_locados['PLACA'] = df_locados['PLACA'].apply(padroniza_placa)
-    df_locados['FROTA'] = 'LOCADO'
-
-    # Monta base única de frota
-    df_frota = pd.concat([df_proprios, df_locados], ignore_index=True)
-    frota_dict = dict(zip(df_frota['PLACA'], df_frota['FROTA']))
-    df_abastecimento['FROTA'] = df_abastecimento['PLACA'].map(frota_dict)
-    df_abastecimento['FROTA'] = df_abastecimento['FROTA'].fillna('NÃO ENCONTRADO')
 
     # Placas em mais de uma OM/arquivo
     placas_multiplas_om = df_abastecimento.groupby('PLACA')['UNIDADE'].nunique()
@@ -92,21 +73,17 @@ def main():
     st.sidebar.header("🔍 Filtros Avançados")
     unidades = st.sidebar.multiselect("Unidade:", df['UNIDADE'].unique(), default=list(df['UNIDADE'].unique()))
     combustiveis = st.sidebar.multiselect("Tipo de Combustível:", df['COMBUSTÍVEL'].unique(), default=list(df['COMBUSTÍVEL'].unique()))
-    frotas = st.sidebar.multiselect("Frota:", df['FROTA'].unique(), default=list(df['FROTA'].unique()))
 
     df_filtrado = df[
         df['UNIDADE'].isin(unidades) &
-        df['COMBUSTÍVEL'].isin(combustiveis) &
-        df['FROTA'].isin(frotas)
+        df['COMBUSTÍVEL'].isin(combustiveis)
     ]
 
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4 = st.columns(4)
     col1.metric("Total de Registros", len(df_filtrado))
     col2.metric("Viaturas Únicas", df_filtrado['PLACA'].nunique())
     col3.metric("Total de Litros", f"{df_filtrado['TOTAL_LITROS'].sum():,.2f} L")
     col4.metric("Total Gasto (R$)", "R$ " + formatar_reais(df_filtrado['VALOR_TOTAL'].sum()))
-    perc_nao_encontrado = (df_filtrado['FROTA'].value_counts(normalize=True).get('NÃO ENCONTRADO', 0)) * 100
-    col5.metric("% Não Encontrados", f"{perc_nao_encontrado:.1f}%")
 
     st.subheader("📊 Consumo e Gasto por Unidade")
     colA, colB = st.columns(2)
@@ -165,13 +142,13 @@ def main():
     )
 
     st.subheader("📋 Detalhamento dos Abastecimentos")
-    df_show = df_filtrado[['PLACA', 'UNIDADE', 'COMBUSTÍVEL', 'TOTAL_LITROS', 'VALOR_TOTAL', 'FROTA']].copy()
+    df_show = df_filtrado[['PLACA', 'UNIDADE', 'COMBUSTÍVEL', 'TOTAL_LITROS', 'VALOR_TOTAL']].copy()
     df_show['VALOR_TOTAL'] = df_show['VALOR_TOTAL'].apply(formatar_reais)
     st.dataframe(df_show, use_container_width=True)
 
     if not df_multiplas_om.empty:
         st.warning("🚨 Viaturas abastecidas em mais de uma OM/planilha:")
-        df_multiplas_om_show = df_multiplas_om[['PLACA', 'UNIDADE', 'COMBUSTÍVEL', 'TOTAL_LITROS', 'VALOR_TOTAL', 'FROTA']].copy()
+        df_multiplas_om_show = df_multiplas_om[['PLACA', 'UNIDADE', 'COMBUSTÍVEL', 'TOTAL_LITROS', 'VALOR_TOTAL']].copy()
         df_multiplas_om_show['VALOR_TOTAL'] = df_multiplas_om_show['VALOR_TOTAL'].apply(formatar_reais)
         st.dataframe(df_multiplas_om_show.sort_values(['PLACA', 'UNIDADE']), use_container_width=True)
 
