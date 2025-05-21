@@ -11,24 +11,26 @@ st.set_page_config(
     layout="wide"
 )
 
-# CONFIGURE AQUI SEU REPO/PATH
+# Config do repositório (ajustado ao SEU caso)
 GITHUB_USER = "DLOG2025"
 GITHUB_REPO = "Dashboard-PMAL-Abastecimento"
-GITHUB_PATH = ""  # Se os arquivos estão na raiz, deixe vazio. Se estiverem em uma pasta, coloque o nome da pasta
+GITHUB_PATH = ""  # Raiz
 
-# Busque todos os relatórios com nome padrão no repositório
 def get_abastecimento_files():
     url = f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/contents/{GITHUB_PATH}"
     resp = requests.get(url)
     arquivos = resp.json()
     lista_links = []
     for arq in arquivos:
+        # Busca arquivos que começam com "Relatório Combustível OPM" (atenção aos acentos!)
         if arq['name'].endswith('.xlsx') and arq['name'].startswith('Relatório Combustível OPM'):
             lista_links.append(arq['download_url'])
+    if not lista_links:
+        st.error("Nenhum relatório de abastecimento foi encontrado no repositório!")
     return lista_links
 
-# Demais arquivos (ajuste se necessário)
 def get_download_url(filename):
+    # Garante que vai pegar o arquivo RAW do repositório principal
     return f"https://github.com/{GITHUB_USER}/{GITHUB_REPO}/raw/main/{filename}"
 
 LINK_LOCADOS = get_download_url('LOCADOS.xlsx')
@@ -73,7 +75,9 @@ def carregar_dados():
         df.rename(columns={df.columns[0]: 'PLACA'}, inplace=True)
         df = df[df['PLACA'].astype(str).str.upper().str.strip() != 'TOTAL']
         nome_arquivo = url.split('/')[-1].replace('.xlsx','')
-        df['UNIDADE'] = nome_arquivo.replace('Relatório Combustível OPM - ', '').replace('º','').strip()
+        # Identifica unidade de forma robusta (melhor para nomes grandes!)
+        unidade = nome_arquivo.replace('Relatório Combustível OPM - ', '').replace('º','').strip()
+        df['UNIDADE'] = unidade
         df['ARQUIVO'] = nome_arquivo
         df['PLACA'] = df['PLACA'].apply(padroniza_placa)
         for col in ['Gasolina (Lts)', 'Álcool (Lts)', 'Diesel (Lts)', 'Diesel S10 (Lts)']:
@@ -86,6 +90,9 @@ def carregar_dados():
         df['VALOR_TOTAL'] = df.apply(valor_total, axis=1)
         df['COMBUSTÍVEL'] = df.apply(tipo_combustivel, axis=1)
         dados.append(df)
+    if not dados:
+        st.error("Nenhum arquivo de abastecimento foi carregado! Verifique o repositório.")
+        st.stop()
     df_abastecimento = pd.concat(dados, ignore_index=True)
 
     df_proprios = baixar_excel(LINK_PROPRIOS)
