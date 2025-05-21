@@ -1,25 +1,31 @@
-# app.py
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 
+# Configuração da página
 st.set_page_config(
-    page_title="Dashboard PMAL – Combustível",
+    page_title="Dashboard PMAL - Combustível",
     page_icon="⛽️",
     layout="wide"
 )
 
 @st.cache_data(ttl=3600)
 def load_data():
-    # Lê diretamente as planilhas que estão no repositório
-    ab = pd.read_excel("Abastecimentos_Consolidados.xlsx")
-    fr = pd.read_excel("Frota_Master_Enriched.xlsx")
+    # Lê apenas as colunas essenciais para performance
+    ab = pd.read_excel(
+        "Abastecimentos_Consolidados.xlsx",
+        usecols=["Placa", "Unidade", "TOTAL_LITROS", "VALOR_TOTAL"]
+    )
+    fr = pd.read_excel(
+        "Frota_Master_Enriched.xlsx",
+        usecols=["Placa"]
+    )
 
-    # Unifica colunas em maiúsculas
+    # Padroniza nomes de colunas
     ab.columns = ab.columns.str.upper()
     fr.columns = fr.columns.str.upper()
 
-    # Renomeia para um padrão único
+    # Renomeia para padrão interno
     ab = ab.rename(columns={
         "PLACA": "Placa",
         "UNIDADE": "OPM",
@@ -28,45 +34,38 @@ def load_data():
     })
     fr = fr.rename(columns={"PLACA": "Placa"})
 
-    # Padroniza a placa
+    # Padroniza valores de placa
     ab["Placa"] = (
-        ab["Placa"]
-        .astype(str)
+        ab["Placa"].astype(str)
         .str.upper()
         .str.replace(r"[^A-Z0-9]", "", regex=True)
     )
     fr["Placa"] = (
-        fr["Placa"]
-        .astype(str)
+        fr["Placa"].astype(str)
         .str.upper()
         .str.replace(r"[^A-Z0-9]", "", regex=True)
     )
 
-    # Faz o merge
+    # Mescla abastecimentos com frota
     df = ab.merge(fr, on="Placa", how="left")
     return df
+
+# Função principal
 
 def main():
     st.title("📊 Dashboard Online – Consumo de Combustível PMAL")
 
-    # Carrega dados
+    # Carrega os dados
     df = load_data()
 
-    # --- SIDEBAR ---
+    # SIDEBAR: filtros de OPM
     st.sidebar.header("Filtros")
-    # Filtra por arquivo de origem (ARQUIVO) se existir
-    if "ARQUIVO" in df.columns:
-        arquivos = sorted(df["ARQUIVO"].unique())
-        sel_arquivos = st.sidebar.multiselect("Arquivos (meses)", arquivos, default=arquivos)
-        df = df[df["ARQUIVO"].isin(sel_arquivos)]
-
-    # Filtra por OPM
     if "OPM" in df.columns:
         opms = sorted(df["OPM"].dropna().unique())
-        sel_opm = st.sidebar.multiselect("OPM", opms, default=opms)
+        sel_opm = st.sidebar.multiselect("Selecione OPM(s)", opms, default=opms)
         df = df[df["OPM"].isin(sel_opm)]
 
-    # --- TABS ---
+    # Abas do dashboard
     tab1, tab2, tab3, tab4 = st.tabs([
         "✅ KPIs",
         "📈 Consumo por Arquivo",
@@ -88,7 +87,7 @@ def main():
         st.subheader("Consumo por Arquivo")
         if "ARQUIVO" in df.columns:
             grp = df.groupby("ARQUIVO")["Litros"].sum().reset_index()
-            fig = px.bar(grp, x="ARQUIVO", y="Litros", labels={"Litros":"Litros (L)"})
+            fig = px.bar(grp, x="ARQUIVO", y="Litros", labels={"Litros": "Litros (L)"})
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("Coluna 'ARQUIVO' não encontrada.")
@@ -107,13 +106,14 @@ def main():
         df["Z"] = (df["Litros"] - df["Litros"].mean()) / df["Litros"].std()
         anomal = df[df["Z"].abs() > 2]
         st.metric("Total Registros", len(df), delta=f"{len(anomal)} anomalias")
-        st.dataframe(anomal[["Placa","Litros","Custo"]], use_container_width=True)
+        st.dataframe(anomal[["Placa", "Litros", "Custo"]], use_container_width=True)
 
+    # Efeito visual: balões
     if st.sidebar.button("🎉 Balões"):
         st.balloons()
 
     st.markdown("---")
-    st.markdown("_Dashboard 100% online, sem uploads ou configurações manuais._")
+    st.markdown("_Dashboard sem mapeamento e rápido de carregar (usecols)._")
 
 if __name__ == "__main__":
     main()
