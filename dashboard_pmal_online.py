@@ -1,119 +1,169 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import os
 
-# Configuração da página
 st.set_page_config(
     page_title="Dashboard PMAL - Combustível",
-    page_icon="⛽️",
+    page_icon="🚒",
     layout="wide"
 )
 
-@st.cache_data(ttl=3600)
-def load_data():
-    # Lê apenas as colunas essenciais para performance
-    ab = pd.read_excel(
-        "Abastecimentos_Consolidados.xlsx",
-        usecols=["Placa", "Unidade", "TOTAL_LITROS", "VALOR_TOTAL"]
-    )
-    fr = pd.read_excel(
-        "Frota_Master_Enriched.xlsx",
-        usecols=["Placa"]
-    )
+def padroniza_placa(placa):
+    return str(placa).upper().replace('-', '').replace(' ', '')
 
-    # Padroniza nomes de colunas
-    ab.columns = ab.columns.str.upper()
-    fr.columns = fr.columns.str.upper()
+def tipo_combustivel(row):
+    combustiveis = {
+        'Gasolina': row.get('Gasolina (Lts)', 0),
+        'Álcool': row.get('Álcool (Lts)', 0),
+        'Diesel': row.get('Diesel (Lts)', 0),
+        'Diesel S10': row.get('Diesel S10 (Lts)', 0)
+    }
+    return max(combustiveis, key=combustiveis.get)
 
-    # Renomeia para padrão interno
-    ab = ab.rename(columns={
-        "PLACA": "Placa",
-        "UNIDADE": "OPM",
-        "TOTAL_LITROS": "Litros",
-        "VALOR_TOTAL": "Custo"
-    })
-    fr = fr.rename(columns={"PLACA": "Placa"})
-
-    # Padroniza valores de placa
-    ab["Placa"] = (
-        ab["Placa"].astype(str)
-        .str.upper()
-        .str.replace(r"[^A-Z0-9]", "", regex=True)
-    )
-    fr["Placa"] = (
-        fr["Placa"].astype(str)
-        .str.upper()
-        .str.replace(r"[^A-Z0-9]", "", regex=True)
+def valor_total(row):
+    return (
+        float(str(row.get('Gasolina (R$)', '0')).replace('R$', '').replace(' ', '').replace(',', '.').replace('-', '0') or 0) +
+        float(str(row.get('Álcool (R$)', '0')).replace('R$', '').replace(' ', '').replace(',', '.').replace('-', '0') or 0) +
+        float(str(row.get('Diesel (R$)', '0')).replace('R$', '').replace(' ', '').replace(',', '.').replace('-', '0') or 0) +
+        float(str(row.get('Diesel S10 (R$)', '0')).replace('R$', '').replace(' ', '').replace(',', '.').replace('-', '0') or 0)
     )
 
-    # Mescla abastecimentos com frota
-    df = ab.merge(fr, on="Placa", how="left")
-    return df
+def carregar_dados():
+    arquivos = [f for f in os.listdir() if f.upper().endswith("ABR.XLSX") and not f.startswith("~$")]
+    dados = []
+    for arquivo in arquivos:
+        df = pd.read_excel(arquivo, skiprows=4)
+        df.rename(columns={df.columns[0]: 'PLACA'}, inplace=True)
+        df = df[df['PLACA'].astype(str).str.upper().str.strip() != 'TOTAL']
+        df['UNIDADE'] = arquivo.split(' ABR')[0].replace('º', '').strip()
+        df['ARQUIVO'] = arquivo
+        df['PLACA'] = df['PLACA'].apply(padroniza_placa)
+        for col in ['Gasolina (Lts)', 'Álcool (Lts)', 'Diesel (Lts)', 'Diesel S10 (Lts)']:
+            if col not in df.columns:
+                df[col] = 0
+        for col in ['Gasolina (R$)', 'Álcool (R$)', 'Diesel (R$)', 'Diesel S10 (R$)']:
+            if col not in df.columns:
+                df[col] = 0
+        df['TOTAL_LITROS'] = df[['Gasolina (Lts)', 'Álcool (Lts)', 'Diesel (Lts)', 'Diesel S10 (Lts)']].sum(axis=1)
+        df['VALOR_TOTAL'] = df.apply(valor_total, axis=1)
+        df['COMBUSTÍVEL'] = df.apply(tipo_combustivel, axis=1)
+        dados.append(df)
+    df_abastecimento = pd.concat(dados, ignore_index=True)
 
-# Função principal
+    # Placas em mais de uma OM/arquivo
+    placas_multiplas_om = df_abastecimento.groupby('PLACA')['UNIDADE'].nunique()
+    placas_multiplas_om = placas_multiplas_om[placas_multiplas_om > 1].index.tolist()
+    df_multiplas_om = df_abastecimento[df_abastecimento['PLACA'].isin(placas_multiplas_om)].sort_values('PLACA')
+
+    return df_abastecimento, df_multiplas_om
+
+def formatar_reais(valor):
+    try:
+        return f"{valor:,.2f}".replace(',', 'v').replace('.', ',').replace('v', '.')
+    except:
+        return valor
+
+def gerar_ranking_consumo(df):
+    # Ranking geral por PLACA (maior gasto = 1)
+    ranking = df.groupby('PLACA')['VALOR_TOTAL'].sum().sort_values(ascending=False).reset_index()
+    ranking['Ranking Consumo'] = ranking['VALOR_TOTAL'].rank(method='dense', ascending=False).astype(int)
+    # Cria dicionário PLACA → Ranking
+    dict_ranking = dict(zip(ranking['PLACA'], ranking['Ranking Consumo']))
+    return dict_ranking
 
 def main():
-    st.title("📊 Dashboard Online – Consumo de Combustível PMAL")
+    st.title("🚒 Dashboard Final de Abastecimento - PMAL")
+    st.caption("Todos os dados carregados automaticamente do repositório!")
 
-    # Carrega os dados
-    df = load_data()
+    df, df_multiplas_om = carregar_dados()
 
-    # SIDEBAR: filtros de OPM
-    st.sidebar.header("Filtros")
-    if "OPM" in df.columns:
-        opms = sorted(df["OPM"].dropna().unique())
-        sel_opm = st.sidebar.multiselect("Selecione OPM(s)", opms, default=opms)
-        df = df[df["OPM"].isin(sel_opm)]
+    st.sidebar.header("🔍 Filtros Avançados")
+    unidades = st.sidebar.multiselect("Unidade:", df['UNIDADE'].unique(), default=list(df['UNIDADE'].unique()))
+    combustiveis = st.sidebar.multiselect("Tipo de Combustível:", df['COMBUSTÍVEL'].unique(), default=list(df['COMBUSTÍVEL'].unique()))
 
-    # Abas do dashboard
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "✅ KPIs",
-        "📈 Consumo por Arquivo",
-        "🥧 Distribuição de Combustível",
-        "🚨 Anomalias"
-    ])
+    df_filtrado = df[
+        df['UNIDADE'].isin(unidades) &
+        df['COMBUSTÍVEL'].isin(combustiveis)
+    ]
 
-    with tab1:
-        st.subheader("KPIs Principais")
-        total_l = df["Litros"].sum()
-        total_c = df["Custo"].sum()
-        media_v = df.groupby("Placa")["Litros"].sum().mean()
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total Litros (L)", f"{total_l:,.0f}")
-        c2.metric("Total Gasto (R$)", f"R$ {total_c:,.2f}")
-        c3.metric("Média por Viatura (L)", f"{media_v:,.1f}")
+    # Calcula o ranking por consumo total de cada placa
+    dict_ranking = gerar_ranking_consumo(df)
 
-    with tab2:
-        st.subheader("Consumo por Arquivo")
-        if "ARQUIVO" in df.columns:
-            grp = df.groupby("ARQUIVO")["Litros"].sum().reset_index()
-            fig = px.bar(grp, x="ARQUIVO", y="Litros", labels={"Litros": "Litros (L)"})
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Coluna 'ARQUIVO' não encontrada.")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Total de Registros", len(df_filtrado))
+    col2.metric("Viaturas Únicas", df_filtrado['PLACA'].nunique())
+    col3.metric("Total de Litros", f"{df_filtrado['TOTAL_LITROS'].sum():,.2f} L")
+    col4.metric("Total Gasto (R$)", "R$ " + formatar_reais(df_filtrado['VALOR_TOTAL'].sum()))
 
-    with tab3:
-        st.subheader("Distribuição por Combustível Dominante")
-        if "COMBUSTIVEL_DOMINANTE" in df.columns:
-            dist = df.groupby("COMBUSTIVEL_DOMINANTE")["Litros"].sum().reset_index()
-            fig = px.pie(dist, names="COMBUSTIVEL_DOMINANTE", values="Litros", hole=0.4)
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Coluna 'COMBUSTIVEL_DOMINANTE' não encontrada.")
+    st.subheader("📊 Consumo e Gasto por Unidade")
+    colA, colB = st.columns(2)
+    consumo_por_unidade = df_filtrado.groupby('UNIDADE')['TOTAL_LITROS'].sum().sort_values(ascending=True)
+    colA.plotly_chart(
+        px.bar(
+            consumo_por_unidade, 
+            orientation='h', 
+            labels={'value': 'Litros', 'index': 'Unidade'}, 
+            title='Litros por Unidade'
+        ), 
+        use_container_width=True
+    )
 
-    with tab4:
-        st.subheader("Detecção de Anomalias (Z-score)")
-        df["Z"] = (df["Litros"] - df["Litros"].mean()) / df["Litros"].std()
-        anomal = df[df["Z"].abs() > 2]
-        st.metric("Total Registros", len(df), delta=f"{len(anomal)} anomalias")
-        st.dataframe(anomal[["Placa", "Litros", "Custo"]], use_container_width=True)
+    valor_por_unidade = df_filtrado.groupby('UNIDADE')['VALOR_TOTAL'].sum().sort_values(ascending=True)
+    colB.plotly_chart(
+        px.bar(
+            valor_por_unidade, 
+            orientation='h', 
+            labels={'value': 'R$', 'index': 'Unidade'}, 
+            title='Valor Gasto por Unidade'
+        ), 
+        use_container_width=True
+    )
 
-    # Efeito visual: balões
-    if st.sidebar.button("🎉 Balões"):
-        st.balloons()
+    st.subheader("🏆 Top 20 Viaturas por Consumo e por Valor Gasto")
+    top_litros = df_filtrado.groupby('PLACA')['TOTAL_LITROS'].sum().sort_values(ascending=False).head(20)
+    st.plotly_chart(
+        px.bar(
+            top_litros, 
+            labels={'value': 'Litros', 'index': 'PLACA'}, 
+            title='Top 20 Viaturas em Litros'
+        ), 
+        use_container_width=True
+    )
 
-    st.markdown("---")
-    st.markdown("_Dashboard sem mapeamento e rápido de carregar (usecols)._")
+    top_valor = df_filtrado.groupby('PLACA')['VALOR_TOTAL'].sum().sort_values(ascending=False).head(20)
+    st.plotly_chart(
+        px.bar(
+            top_valor, 
+            labels={'value': 'R$', 'index': 'PLACA'}, 
+            title='Top 20 Viaturas em Valor'
+        ), 
+        use_container_width=True
+    )
+
+    st.subheader("⛽ Distribuição de Combustível")
+    combustiveis_graf = df_filtrado['COMBUSTÍVEL'].value_counts()
+    st.plotly_chart(
+        px.pie(
+            names=combustiveis_graf.index, 
+            values=combustiveis_graf.values, 
+            title="Proporção por Combustível"
+        ), 
+        use_container_width=True
+    )
+
+    st.subheader("📋 Detalhamento dos Abastecimentos")
+    df_show = df_filtrado[['PLACA', 'UNIDADE', 'COMBUSTÍVEL', 'TOTAL_LITROS', 'VALOR_TOTAL']].copy()
+    df_show['VALOR_TOTAL'] = df_show['VALOR_TOTAL'].apply(formatar_reais)
+    df_show.insert(0, 'Ranking Consumo', df_show['PLACA'].map(dict_ranking))
+    st.dataframe(df_show.reset_index(drop=True), use_container_width=True)
+
+    if not df_multiplas_om.empty:
+        st.warning("🚨 Viaturas abastecidas em mais de uma OM/planilha:")
+        # NÃO inclui ranking aqui!
+        df_multiplas_om_show = df_multiplas_om[['PLACA', 'UNIDADE', 'COMBUSTÍVEL', 'TOTAL_LITROS', 'VALOR_TOTAL']].copy()
+        df_multiplas_om_show['VALOR_TOTAL'] = df_multiplas_om_show['VALOR_TOTAL'].apply(formatar_reais)
+        st.dataframe(df_multiplas_om_show.reset_index(drop=True).sort_values(['PLACA', 'UNIDADE']), use_container_width=True)
 
 if __name__ == "__main__":
     main()
