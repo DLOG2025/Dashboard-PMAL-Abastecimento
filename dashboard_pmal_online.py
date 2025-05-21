@@ -64,6 +64,14 @@ def formatar_reais(valor):
     except:
         return valor
 
+def gerar_ranking_consumo(df):
+    # Ranking geral por PLACA (maior gasto = 1)
+    ranking = df.groupby('PLACA')['VALOR_TOTAL'].sum().sort_values(ascending=False).reset_index()
+    ranking['Ranking Consumo'] = ranking['VALOR_TOTAL'].rank(method='dense', ascending=False).astype(int)
+    # Cria dicionário PLACA → Ranking
+    dict_ranking = dict(zip(ranking['PLACA'], ranking['Ranking Consumo']))
+    return dict_ranking
+
 def main():
     st.title("🚒 Dashboard Final de Abastecimento - PMAL")
     st.caption("Todos os dados carregados automaticamente do repositório!")
@@ -78,6 +86,9 @@ def main():
         df['UNIDADE'].isin(unidades) &
         df['COMBUSTÍVEL'].isin(combustiveis)
     ]
+
+    # Calcula o ranking por consumo total de cada placa
+    dict_ranking = gerar_ranking_consumo(df)
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Total de Registros", len(df_filtrado))
@@ -144,13 +155,15 @@ def main():
     st.subheader("📋 Detalhamento dos Abastecimentos")
     df_show = df_filtrado[['PLACA', 'UNIDADE', 'COMBUSTÍVEL', 'TOTAL_LITROS', 'VALOR_TOTAL']].copy()
     df_show['VALOR_TOTAL'] = df_show['VALOR_TOTAL'].apply(formatar_reais)
-    st.dataframe(df_show, use_container_width=True)
+    df_show.insert(0, 'Ranking Consumo', df_show['PLACA'].map(dict_ranking))
+    st.dataframe(df_show.reset_index(drop=True), use_container_width=True)
 
     if not df_multiplas_om.empty:
         st.warning("🚨 Viaturas abastecidas em mais de uma OM/planilha:")
+        # NÃO inclui ranking aqui!
         df_multiplas_om_show = df_multiplas_om[['PLACA', 'UNIDADE', 'COMBUSTÍVEL', 'TOTAL_LITROS', 'VALOR_TOTAL']].copy()
         df_multiplas_om_show['VALOR_TOTAL'] = df_multiplas_om_show['VALOR_TOTAL'].apply(formatar_reais)
-        st.dataframe(df_multiplas_om_show.sort_values(['PLACA', 'UNIDADE']), use_container_width=True)
+        st.dataframe(df_multiplas_om_show.reset_index(drop=True).sort_values(['PLACA', 'UNIDADE']), use_container_width=True)
 
 if __name__ == "__main__":
     main()
