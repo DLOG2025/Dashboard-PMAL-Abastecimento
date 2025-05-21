@@ -99,7 +99,7 @@ def main():
     card_metrics("Viaturas Gerais", f"{len(frota_f):,}")
     card_metrics("Idade Média (anos)", f"{frota_f['IDADE_FROTA'].mean():.1f}" if frota_f["IDADE_FROTA"].notna().any() else "–")
     card_metrics("Custo Total R$", f"{frota_f['CUSTO_TOTAL'].sum():,.2f}")
-    litros_total = abast[abast["PLACA"].isin(frota_f["PLACA"]])["TOTAL_LITROS"].sum()
+    litros_total = abast[abast["PLACA"].isin(frota_f["PLACA"])] ["TOTAL_LITROS"].sum()
     card_metrics("Total de Litros", f"{litros_total:,.2f} L")
 
     st.divider()
