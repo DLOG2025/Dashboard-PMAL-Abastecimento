@@ -1,11 +1,7 @@
-# ==========================================
-# DASHBOARD PMAL - CONTROLE DE COMBUSTÍVEL (100% ONLINE - UPLOAD DE ARQUIVOS)
-# ==========================================
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import numpy as np
+import os
 
 st.set_page_config(
     page_title="Dashboard PMAL - Combustível",
@@ -33,54 +29,43 @@ def valor_total(row):
         float(str(row.get('Diesel S10 (R$)', '0')).replace('R$', '').replace(' ', '').replace(',', '.').replace('-', '0') or 0)
     )
 
-def carregar_dados(uploaded_abast_files, frota_proprios_file, frota_locados_file):
-    # Carregar arquivos de abastecimento
+def carregar_dados():
+    # Lista todos os arquivos da pasta atual
+    arquivos = [f for f in os.listdir() if f.upper().endswith("ABR.XLSX") and not f.startswith("~$")]
     dados = []
-    for arquivo in uploaded_abast_files:
+    for arquivo in arquivos:
         df = pd.read_excel(arquivo, skiprows=4)
         df.rename(columns={df.columns[0]: 'PLACA'}, inplace=True)
         df = df[df['PLACA'].astype(str).str.upper().str.strip() != 'TOTAL']
-        df['UNIDADE'] = arquivo.name.split(' ABR')[0].replace('º', '').strip()
-        df['ARQUIVO'] = arquivo.name
+        df['UNIDADE'] = arquivo.split(' ABR')[0].replace('º', '').strip()
+        df['ARQUIVO'] = arquivo
         df['PLACA'] = df['PLACA'].apply(padroniza_placa)
-
         for col in ['Gasolina (Lts)', 'Álcool (Lts)', 'Diesel (Lts)', 'Diesel S10 (Lts)']:
             if col not in df.columns:
                 df[col] = 0
-
         for col in ['Gasolina (R$)', 'Álcool (R$)', 'Diesel (R$)', 'Diesel S10 (R$)']:
             if col not in df.columns:
                 df[col] = 0
-
         df['TOTAL_LITROS'] = df[['Gasolina (Lts)', 'Álcool (Lts)', 'Diesel (Lts)', 'Diesel S10 (Lts)']].sum(axis=1)
         df['VALOR_TOTAL'] = df.apply(valor_total, axis=1)
         df['COMBUSTÍVEL'] = df.apply(tipo_combustivel, axis=1)
         dados.append(df)
-
     df_abastecimento = pd.concat(dados, ignore_index=True)
 
-    # Carregar e tratar arquivos de frota
-    df_proprios, df_locados = None, None
-    if frota_proprios_file:
-        df_proprios = pd.read_excel(frota_proprios_file)
-        df_proprios.rename(columns={df_proprios.columns[0]: 'PLACA'}, inplace=True)
-        df_proprios['PLACA'] = df_proprios['PLACA'].apply(padroniza_placa)
-        df_proprios['FROTA'] = 'PRÓPRIO'
-    if frota_locados_file:
-        df_locados = pd.read_excel(frota_locados_file)
-        df_locados.rename(columns={df_locados.columns[0]: 'PLACA'}, inplace=True)
-        df_locados['PLACA'] = df_locados['PLACA'].apply(padroniza_placa)
-        df_locados['FROTA'] = 'LOCADO'
+    # Frota PRÓPRIOS
+    df_proprios = pd.read_excel("PROPRIOS_JUSTIÇA.xlsx")
+    df_proprios.rename(columns={df_proprios.columns[0]: 'PLACA'}, inplace=True)
+    df_proprios['PLACA'] = df_proprios['PLACA'].apply(padroniza_placa)
+    df_proprios['FROTA'] = 'PRÓPRIO'
 
-    if df_proprios is not None and df_locados is not None:
-        df_frota = pd.concat([df_proprios, df_locados], ignore_index=True)
-    elif df_proprios is not None:
-        df_frota = df_proprios.copy()
-    elif df_locados is not None:
-        df_frota = df_locados.copy()
-    else:
-        df_frota = pd.DataFrame(columns=['PLACA', 'FROTA'])
+    # Frota LOCADOS
+    df_locados = pd.read_excel("LOCADOS.xlsx")
+    df_locados.rename(columns={df_locados.columns[0]: 'PLACA'}, inplace=True)
+    df_locados['PLACA'] = df_locados['PLACA'].apply(padroniza_placa)
+    df_locados['FROTA'] = 'LOCADO'
 
+    # Monta base única de frota
+    df_frota = pd.concat([df_proprios, df_locados], ignore_index=True)
     frota_dict = dict(zip(df_frota['PLACA'], df_frota['FROTA']))
     df_abastecimento['FROTA'] = df_abastecimento['PLACA'].map(frota_dict)
     df_abastecimento['FROTA'] = df_abastecimento['FROTA'].fillna('NÃO ENCONTRADO')
@@ -100,32 +85,9 @@ def formatar_reais(valor):
 
 def main():
     st.title("🚒 Dashboard Final de Abastecimento - PMAL")
-    st.caption("Faça upload dos arquivos Excel para análise online!")
+    st.caption("Todos os dados carregados automaticamente do repositório!")
 
-    st.sidebar.header("🔽 Upload dos Arquivos")
-    abast_files = st.sidebar.file_uploader(
-        "1️⃣ Selecione arquivos de abastecimento (.xlsx) — pode selecionar vários",
-        type="xlsx", 
-        accept_multiple_files=True
-    )
-
-    frota_proprios = st.sidebar.file_uploader(
-        "2️⃣ Selecione o arquivo de frota PRÓPRIOS_JUSTIÇA (.xlsx) [opcional]",
-        type="xlsx", 
-        accept_multiple_files=False
-    )
-
-    frota_locados = st.sidebar.file_uploader(
-        "3️⃣ Selecione o arquivo de frota LOCADOS (.xlsx) [opcional]",
-        type="xlsx", 
-        accept_multiple_files=False
-    )
-
-    if not abast_files:
-        st.warning("Faça upload de pelo menos um arquivo de abastecimento para visualizar os dados.")
-        st.stop()
-
-    df, df_multiplas_om = carregar_dados(abast_files, frota_proprios, frota_locados)
+    df, df_multiplas_om = carregar_dados()
 
     st.sidebar.header("🔍 Filtros Avançados")
     unidades = st.sidebar.multiselect("Unidade:", df['UNIDADE'].unique(), default=list(df['UNIDADE'].unique()))
@@ -138,7 +100,6 @@ def main():
         df['FROTA'].isin(frotas)
     ]
 
-    # MÉTRICAS DE TOPO
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Total de Registros", len(df_filtrado))
     col2.metric("Viaturas Únicas", df_filtrado['PLACA'].nunique())
@@ -147,7 +108,6 @@ def main():
     perc_nao_encontrado = (df_filtrado['FROTA'].value_counts(normalize=True).get('NÃO ENCONTRADO', 0)) * 100
     col5.metric("% Não Encontrados", f"{perc_nao_encontrado:.1f}%")
 
-    # GRÁFICOS
     st.subheader("📊 Consumo e Gasto por Unidade")
     colA, colB = st.columns(2)
     consumo_por_unidade = df_filtrado.groupby('UNIDADE')['TOTAL_LITROS'].sum().sort_values(ascending=True)
