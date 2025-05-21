@@ -152,7 +152,7 @@ def main():
         viaturas_por_opm = df_interior.groupby('UNIDADE_LIMPA')['PLACA'].nunique().reset_index(name='VIATURAS')
         resumo_opm = df_cidades_opm.merge(viaturas_por_opm, left_on='OPM_LIMPA', right_on='UNIDADE_LIMPA', how='left')
         resumo_opm['VIATURAS'] = resumo_opm['VIATURAS'].fillna(0).astype(int)
-        resumo_opm['VIAT_POR_CIDADE'] = (resumo_opm['VIATURAS'] / resumo_opm['QTD_CIDADES']).round(2)
+        resumo_opm['VIAT_POR_CIDADE'] = (resumo_opm['VIATURAS'] / resumo_opm['CIDADES']).round(2)
         resumo_opm = resumo_opm.sort_values('VIAT_POR_CIDADE')
         colX, colY = st.columns([2, 1])
         colX.plotly_chart(
@@ -166,7 +166,7 @@ def main():
             use_container_width=True
         )
         colY.dataframe(
-            resumo_opm[['OPM', 'QTD_CIDADES', 'VIATURAS', 'VIAT_POR_CIDADE']],
+            resumo_opm[['OPM', 'CIDADES', 'VIATURAS', 'VIAT_POR_CIDADE']],
             use_container_width=True
         )
         st.info("🔎 **Menor valor de Viaturas por Cidade indica OPM potencialmente mais desfavorecida**.")
