@@ -11,34 +11,24 @@ st.set_page_config(
     layout="wide"
 )
 
-# Configuração do seu repositório GitHub
 GITHUB_USER = "DLOG2025"
 GITHUB_REPO = "Dashboard-PMAL-Abastecimento"
 GITHUB_PATH = ""  # Raiz do repositório
 
 def get_abastecimento_files():
+    url = f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/contents/{GITHUB_PATH}?per_page=1000"
+    resp = requests.get(url)
+    arquivos = resp.json()
     lista_links = []
-    page = 1
-    while True:
-        url = f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/contents/{GITHUB_PATH}?page={page}&per_page=100"
-        resp = requests.get(url)
-        arquivos = resp.json()
-        if not isinstance(arquivos, list) or not arquivos:
-            break
-        count = 0
-        for arq in arquivos:
-            if (
-                isinstance(arq, dict)
-                and arq['name'].endswith('.xlsx')
-                and arq['name'].startswith('Relatório Combustível OPM')
-            ):
-                lista_links.append(arq['download_url'])
-                count += 1
-        if len(arquivos) < 100:
-            break
-        page += 1
+    for arq in arquivos:
+        if (
+            isinstance(arq, dict)
+            and arq['name'].endswith(' ABR.xlsx')
+        ):
+            lista_links.append(arq['download_url'])
     if not lista_links:
-        st.error("Nenhum relatório de abastecimento foi encontrado no repositório!")
+        st.error("Nenhum relatório de abastecimento (nome termina com ' ABR.xlsx') foi encontrado no repositório!")
+        st.stop()
     return lista_links
 
 def get_download_url(filename):
@@ -86,7 +76,7 @@ def carregar_dados():
         df.rename(columns={df.columns[0]: 'PLACA'}, inplace=True)
         df = df[df['PLACA'].astype(str).str.upper().str.strip() != 'TOTAL']
         nome_arquivo = url.split('/')[-1].replace('.xlsx','')
-        unidade = nome_arquivo.replace('Relatório Combustível OPM - ', '').replace('º','').strip()
+        unidade = nome_arquivo.replace(' ABR', '').strip()
         df['UNIDADE'] = unidade
         df['ARQUIVO'] = nome_arquivo
         df['PLACA'] = df['PLACA'].apply(padroniza_placa)
@@ -245,7 +235,7 @@ def main():
     df_show['VALOR_TOTAL'] = df_show['VALOR_TOTAL'].apply(formatar_reais)
     st.dataframe(df_show, use_container_width=True)
     if not df_multiplas_om.empty:
-        st.warning("🚨 Viaturas abastecidas em mais de uma OPM/planilha:")
+        st.warning("🚨 Viaturas abastecidas em mais de uma OM/planilha:")
         df_multiplas_om_show = df_multiplas_om[['PLACA', 'UNIDADE', 'COMBUSTÍVEL', 'TOTAL_LITROS', 'VALOR_TOTAL', 'FROTA']].copy()
         df_multiplas_om_show['VALOR_TOTAL'] = df_multiplas_om_show['VALOR_TOTAL'].apply(formatar_reais)
         st.dataframe(df_multiplas_om_show.sort_values(['PLACA', 'UNIDADE']), use_container_width=True)
